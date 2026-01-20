@@ -1,0 +1,112 @@
+python convert.py --a a.txt --b b.txt --c c.txt --mac "2e:a7:15:d9:97:91" --model "SM-S921U"
+
+#!/usr/bin/env python3
+"""
+Convert b.txt into a.txt-style JSONL and write to c.txt.
+
+- a.txt: used only as a "shape reference" (we mimic its output style: one JSON per line)
+- b.txt formats supported:
+  1) A JSON list on one line: [{...},{...}]
+  2) A JSON object: {"events": {...} or [...], "version": 1}
+     - "events" may be:
+         a) a dict whose values are event objects
+         b) a list of event objects
+- For each event, output one line:
+    {"mac": "...", "model": "...", "rawMessage": "<escaped-json-string>", "id": <id>}
+  where rawMessage is a JSON string that contains the original event plus appended mac/model.
+
+Notes:
+- rawMessage in your a.txt example looks like a *string containing JSON* with quotes escaped.
+  We produce the same idea by json.dumps(event_with_mac_model), which returns a JSON string.
+"""
+
+import argparse
+import json
+from typing import Any, Dict, List, Union
+
+
+def load_json(path: str) -> Any:
+    with open(path, "r", encoding="utf-8") as f:
+        s = f.read().strip()
+    if not s:
+        raise ValueError(f"{path} is empty")
+    return json.loads(s)
+
+
+def extract_events(payload: Any) -> List[Dict[str, Any]]:
+    """
+    Return a list of event dicts from either:
+      - list payload
+      - {"events": <dict|list>, ...}
+    """
+    if isinstance(payload, list):
+        # Format 1
+        return [e for e in payload if isinstance(e, dict)]
+
+    if isinstance(payload, dict) and "events" in payload:
+        events = payload["events"]
+        if isinstance(events, list):
+            return [e for e in events if isinstance(e, dict)]
+        if isinstance(events, dict):
+            # Format 2 where events is a mapping; take its values (or if you prefer keys, adjust here)
+            vals = list(events.values())
+            return [e for e in vals if isinstance(e, dict)]
+
+    raise ValueError("Unsupported b.txt format. Expected a JSON list or an object with an 'events' field.")
+
+
+def get_id(event: Dict[str, Any]) -> Union[int, str, None]:
+    """
+    Try common id fields. If none found, return None.
+    """
+    for k in ("id", "event_id", "eventId", "eventID"):
+        if k in event:
+            return event[k]
+    return None
+
+
+def to_a_style_line(event: Dict[str, Any], mac: str, model: str) -> Dict[str, Any]:
+    # Append mac/model into the rawMessage JSON content
+    raw_obj = dict(event)  # copy original event
+    raw_obj["mac"] = mac
+    raw_obj["model"] = model
+
+    # rawMessage should be a JSON string (quotes escaped when the outer object is dumped)
+    raw_message_str = json.dumps(raw_obj, ensure_ascii=False, separators=(",", ":"))
+
+    out = {
+        "mac": mac,
+        "model": model,
+        "rawMessage": raw_message_str,
+    }
+
+    eid = get_id(event)
+    if eid is not None:
+        out["id"] = eid
+
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--a", required=True, help="Path to a.txt (reference, not strictly required)")
+    ap.add_argument("--b", required=True, help="Path to b.txt (input)")
+    ap.add_argument("--c", required=True, help="Path to c.txt (output JSONL)")
+    ap.add_argument("--mac", required=True, help="mac value to set")
+    ap.add_argument("--model", required=True, help="model value to set")
+    args = ap.parse_args()
+
+    # a.txt is provided per your requirement; we don't need to parse it to do the conversion.
+    _ = args.a
+
+    payload = load_json(args.b)
+    events = extract_events(payload)
+
+    with open(args.c, "w", encoding="utf-8") as out_f:
+        for ev in events:
+            line_obj = to_a_style_line(ev, args.mac, args.model)
+            out_f.write(json.dumps(line_obj, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+if __name__ == "__main__":
+    main()
