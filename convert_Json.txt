@@ -80,9 +80,15 @@ def to_a_style_line(event: Dict[str, Any], mac: str, model: str) -> Dict[str, An
         "rawMessage": raw_message_str,
     }
 
-    eid = get_id(event)
-    if eid is not None:
-        out["id"] = eid
+    # Then append ALL fields from the original event (top-level)
+    # If event already has mac/model/rawMessage keys, we still include them but renamed? (default: keep them as-is,
+    # except we avoid overwriting the first three fields.)
+    for k, v in event.items():
+        if k in ("mac", "model", "rawMessage"):
+            # keep but don't overwrite; store with prefix to preserve information if needed
+            out[f"event_{k}"] = v
+        else:
+            out[k] = v
 
     return out
 
